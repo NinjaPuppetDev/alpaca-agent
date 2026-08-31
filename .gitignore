@@ -1,0 +1,26 @@
+# Environment files (secrets & API keys)
+.env
+.env.*
+!.env.example
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Node / Frontend dependencies & builds
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/*.local
+
+# Databases & local storage
+*.db
+*.sqlite3
+
+# OS generated files
+.DS_Store
+Thumbs.db
