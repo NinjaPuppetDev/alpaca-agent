@@ -1,10 +1,12 @@
 """FastAPI entrypoint for the Alpaca Options Overlay Trading Agent backend."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from agent.config import settings
 from agent.data.db import init_db, SessionLocal
@@ -57,16 +59,14 @@ app = FastAPI(
     title="Alpaca Options Overlay Trading Agent API",
     description="Autonomous 3-layer thematic & risk-managed options overlay trading agent for Alpaca Paper Trading.",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    redirect_slashes=True,
 )
 
-import os
-from fastapi.staticfiles import StaticFiles
-
-# Enable CORS for React frontend (Vite default port 5173, 3000, etc.)
+# Enable CORS before registering API routes.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
