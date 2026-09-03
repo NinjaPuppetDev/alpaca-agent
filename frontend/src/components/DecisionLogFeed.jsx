@@ -28,6 +28,8 @@ export default function DecisionLogFeed({ decisions, loading }) {
         return 'Derivatives Overlay';
       case 'watchdog':
         return 'Expiration Watchdog';
+      case 'assistant_reasoning':
+        return 'Assistant Reasoning';
       case 'system':
         return 'System Control';
       default:
@@ -95,7 +97,7 @@ export default function DecisionLogFeed({ decisions, loading }) {
           </div>
 
           <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-lg border border-neutral-200 text-xs">
-            {['all', 'theme', 'overlay', 'watchdog', 'system'].map((l) => (
+            {['all', 'theme', 'overlay', 'watchdog', 'assistant_reasoning', 'system'].map((l) => (
               <button
                 key={l}
                 onClick={() => setFilterLayer(l)}
@@ -105,7 +107,7 @@ export default function DecisionLogFeed({ decisions, loading }) {
                     : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
                 }`}
               >
-                {l === 'all' ? 'All' : l}
+                {l === 'all' ? 'All' : l.replace('_', ' ')}
               </button>
             ))}
           </div>

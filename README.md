@@ -1,151 +1,151 @@
-# Alpaca Autonomous Options Overlay Trading Agent
+# Alpaca Options Overlay Trading Agent
 
-An autonomous three-layer trading agent designed for the **Alpaca AI Trading Agents Hackathon**. The agent discovers thematic portfolios from market news, rebalances equity holdings over time, and overlays risk-mitigating options structures (protective puts, zero-cost collars, covered calls, and vertical spreads) with strict automated expiration management.
+A FastAPI and React application for thematic equity allocation, risk-managed options overlays, and automated expiration handling through Alpaca Paper Trading. It includes a deterministic offline mode for local development and tests.
 
----
+> **Trading safety:** Live trading is not supported. Alpaca credentials, when supplied, are used only with `paper=true`. Autonomous execution is opt-in and defaults to paused.
 
-## 🏛️ System Architecture
+## What It Does
 
-```
-                               ┌──────────────────────────────────────────────┐
-                               │             FastAPI Backend REST             │
-                               │  (/api/portfolio, /api/hedges, /api/status)  │
-                               └──────────────────────┬───────────────────────┘
-                                                      │
-                       ┌──────────────────────────────┼──────────────────────────────┐
-                       │                              │                              │
-        ┌──────────────▼─────────────┐ ┌──────────────▼─────────────┐ ┌──────────────▼─────────────┐
-        │  Layer 1: Theme Portfolio  │ │ Layer 2: Overlay Engine    │ │ Layer 3: Expiration Watchdog│
-        │      (Cadence: Daily)      │ │      (Cadence: Hourly)     │ │      (Cadence: Hourly)     │
-        ├────────────────────────────┤ ├────────────────────────────┤ ├────────────────────────────┤
-        │ • Fetch news via Alpaca    │ │ • Held equity risk check   │ │ • Scan open Hedge records  │
-        │ • Groq LLM theme clustering│ │ • News + VWAP/vol confirm  │ │ • Check DTE ≤ 5 threshold  │
-        │ • Map themes to tickers    │ │ • Classify exposure shape  │ │ • Enforce ROLL or CLOSE    │
-        │ • Equal-weight allocations │ │ • Place protective overlay │ │ • Zero unmanaged expiries  │
-        │ • Rebalance orders         │ │ • Log rule/signal firing   │ │ • Record audit trail       │
-        └──────────────┬─────────────┘ └──────────────┬─────────────┘ └──────────────┬─────────────┘
-                       │                              │                              │
-                       └──────────────────────────────┼──────────────────────────────┘
-                                                      │
-                                ┌─────────────────────▼─────────────────────┐
-                                │             Alpaca Client Wrapper         │
-                                │   (Paper Trading API / alpaca-py / Data)  │
-                                └─────────────────────┬─────────────────────┘
-                                                      │
-                                ┌─────────────────────▼─────────────────────┐
-                                │        SQLite Audit Trail & Models        │
-                                │ (ThemeBasket, Position, Hedge, DecisionLog)│
-                                └───────────────────────────────────────────┘
+The agent runs three scheduled layers:
+
+1. **Theme portfolio (`agent/layers/theme_portfolio.py`)** runs daily. It reads Alpaca news, asks the configured LLM to identify one or two themes, maps them to a predefined liquid-stock universe, calculates equal-weight allocations, and submits guarded rebalance orders.
+2. **Derivatives overlay (`agent/layers/derivatives_overlay.py`)** runs hourly. It evaluates held equities using news, VWAP, volume, and exposure signals before selecting an allowed protective structure: `protective_put`, `collar`, `covered_call`, or `vertical_spread`.
+3. **Expiration watchdog (`agent/layers/expiration_watchdog.py`)** runs on the overlay cadence. Open hedges at or below `EXPIRATION_THRESHOLD_DAYS` are closed and rolled when the underlying remains held, or closed completely when it has been sold.
+
+Every layer records reasoning and actions in the SQLite `DecisionLog` audit trail. The assistant reasoning layer and shared execution pipeline add VWAP chase protection, partial take-profit evaluation, large-allocation hedge checks, and option-leg validation before routing orders.
+
+## Architecture
+
+```text
+FastAPI (agent/main.py)
+  - REST API (agent/api/routes.py)
+  - APScheduler (agent/scheduler.py)
+  - Theme, overlay, and watchdog layers
+  - Shared execution and risk guardrails
+  - AlpacaClient (paper API or deterministic mock)
+  - SQLite state and audit trail
+
+React/Vite dashboard (frontend/src)
+  - Portfolio and account state
+  - Hedges and expiration warnings
+  - Decision log
+  - Agent status, kill switch, liquidation, and manual triggers
 ```
 
----
+## Technology
 
-## 📦 Tech Stack
+- Python 3.12+, FastAPI, SQLAlchemy, APScheduler, and pytest
+- Alpaca Paper Trading through `alpaca-py`
+- Groq LLM provider with a deterministic mock fallback
+- SQLite database, defaulting to `trading_agent.db`
+- React 18, Vite, Tailwind CSS, and Lucide React
 
-- **Backend:** Python 3.12+, FastAPI, SQLAlchemy (SQLite), APScheduler
-- **LLM Provider:** Groq API (`openai/gpt-oss-120b`) behind an abstract `LLMProvider` interface (with deterministic mock fallback)
-- **Broker & Data:** Alpaca Paper Trading API via `alpaca-py` & REST market data
-- **Frontend:** React 18 + Vite + Tailwind CSS + Lucide Icons (Fast-polling dashboard)
+## Project Structure
 
----
+```text
+agent/
+  main.py                         FastAPI app and lifecycle management
+  config.py                       Typed environment settings
+  scheduler.py                    Scheduled jobs and autonomous-mode switch
+  execution_pipeline.py           Shared order guardrails
+  api/routes.py                   Dashboard and trading endpoints
+  data/{db,models}.py             SQLite setup and ORM models
+  layers/
+    theme_portfolio.py            News to themes to equity rebalance
+    derivatives_overlay.py        Equity risk to options overlay
+    expiration_watchdog.py        Close or roll near-expiry hedges
+    assisted_reasoning_layer.py   Pre-routing trade approval checks
+  llm/provider.py                 LLM abstraction and providers
+  risk/vwap_guard.py              VWAP and take-profit guardrails
+  trading/                        Alpaca wrapper and trading risk helpers
+frontend/src/                     React dashboard and UI components
+tests/                            Unit and API/integration tests
+docs/                             Position consistency documentation
+```
 
-## ⚡ The Three Core Layers
+## Setup
 
-### 1. Daily Theme & Portfolio Layer (`agent/layers/theme_portfolio.py`)
-- Ingests recent financial headlines via `AlpacaClient.get_news`.
-- Prompts Groq LLM to cluster catalysts into 1–2 thematic baskets (e.g. *Semiconductors & AI Hardware*, *Critical Minerals*).
-- Maps themes to liquid US equity baskets and computes equal-weight target allocations.
-- Computes difference against currently held positions and submits market rebalance orders.
-- Writes full reasoning and trade actions to `DecisionLog`.
+### Backend
 
-### 2. Hourly Derivatives Overlay Layer (`agent/layers/derivatives_overlay.py`)
-- Evaluates equity delta and exposure for all held stocks.
-- **News-Gating & Confirmation:** Cross-checks news catalysts with intraday VWAP divergence and elevated volume before hedging.
-- **Strict Allowed Structures:**
-  - `protective_put`: Downside buffer for long stock.
-  - `collar`: Protective put financed by selling an OTM covered call.
-  - `covered_call`: Harvests premium during range-bound conditions.
-  - `vertical_spread`: Defined-risk bear put spreads.
-  - *Strict Rule:* Never places standalone directional bets; disallows butterflies and iron condors.
-- Submits multi-leg options orders to Alpaca and records `Hedge` records.
-
-### 3. Hourly Expiration Watchdog (`agent/layers/expiration_watchdog.py`)
-- Scans all active `Hedge` rows in SQLite.
-- Computes Days-to-Expiration (DTE) against the configured threshold (`EXPIRATION_THRESHOLD_DAYS=5`).
-- **Enforces Close-or-Roll:**
-  - If underlying stock is still held: Closes expiring legs and rolls out to a fresh 21–30 DTE contract.
-  - If underlying stock was sold: Closes option overlay completely.
-- Guarantees **no options position crosses into its final week unmanaged**.
-
----
-
-## 🖥️ Frontend Dashboard (4 Panels)
-
-1. **Portfolio Overview:** Real-time equity, cash buffer, active thematic baskets, and holdings table with weights and unrealized P/L.
-2. **Active Hedges:** Open options positions table with structure type, multi-leg specs, expiration dates, DTE countdown, and **visual warning flags for positions $\le 5$ DTE**.
-3. **Decision Log:** Reverse-chronological audit trail of agent reasoning, LLM inputs, and trade executions backing judge reviews.
-4. **Agent Status & Controls:** Cadence indicators, engine health, and **interactive manual trigger buttons** to run any layer on demand.
-
----
-
-## 🚀 Quickstart Guide
-
-### 1. Clone & Setup Python Virtual Environment
 ```bash
-git clone <repo-url>
-cd alpaca
-
-# Create & activate venv
-python3 -m venv venv
-source venv/bin/activate
-
-# Install backend dependencies
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 2. Configure Environment Variables
-Copy `.env.example` to `.env` and fill in your keys:
-```bash
 cp .env.example .env
 ```
 
-```ini
-ALPACA_API_KEY=your_alpaca_key_id
-ALPACA_SECRET_KEY=your_alpaca_secret_key
-ALPACA_PAPER=true
+The default `.env.example` values start the system in mock, paused mode:
 
-GROQ_API_KEY=your_groq_api_key
+```ini
+ALPACA_API_KEY=
+ALPACA_SECRET_KEY=
+ALPACA_PAPER=true
+AUTONOMOUS_MODE=false
+GROQ_API_KEY=
 LLM_MODEL=openai/gpt-oss-120b
 LLM_REASONING_EFFORT=medium
-
 EXPIRATION_THRESHOLD_DAYS=5
 OVERLAY_CADENCE_MINUTES=60
 THEME_CADENCE_HOURS=24
 DATABASE_URL=sqlite:///./trading_agent.db
 ```
 
-*(Note: The agent seamlessly defaults to simulated mock mode if Alpaca or Groq keys are left blank, enabling full local testing out of the box).*
+Blank Alpaca credentials select the simulated client. Mock positions persist in SQLite across restarts. A configured Groq key enables the remote provider; otherwise the application uses its deterministic fallback behavior.
 
-### 3. Run Backend Server
+Start the backend from the repository root:
+
 ```bash
-source venv/bin/activate
+source .venv/bin/activate
 uvicorn agent.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-API Documentation will be available at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-### 4. Run Frontend Dashboard
+The API is documented at [http://localhost:8000/docs](http://localhost:8000/docs). At startup, the application initializes the database. It only seeds state and starts APScheduler when `AUTONOMOUS_MODE=true`; otherwise it remains paused.
+
+### Frontend
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-Open [http://localhost:5173](http://localhost:5173) in your browser.
 
----
+Open [http://localhost:5173](http://localhost:5173). The Vite development server proxies API requests to the backend according to `frontend/vite.config.js`.
 
-## 🧪 Running Tests
+For a production frontend bundle:
+
 ```bash
-source venv/bin/activate
+npm run build
+```
+
+When `frontend/dist` exists, FastAPI serves it from `/`.
+
+## API Surface
+
+All routes below use the `/api` prefix:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/portfolio` | Account, equity holdings, themes, and option positions |
+| GET | `/hedges` | Open or historical hedges with DTE and warning flags |
+| GET | `/decisions` | Reverse-chronological audit log; supports `layer` and `limit` |
+| GET | `/status` | Scheduler state, cadences, providers, and layer health |
+| GET/POST | `/autonomous-mode` | Read or toggle the autonomous execution kill switch |
+| POST | `/trigger/{layer_name}` | Run `theme`, `overlay`, `watchdog`, or `all` when enabled |
+| GET | `/account/summary` | Account cash, equity, buying power, and status |
+| GET | `/account/positions` | Broker-synchronized equity and option positions |
+| POST | `/positions/liquidate-smart` | Sell losing equity positions only |
+| POST | `/positions/liquidate-all` | Liquidate all equity positions |
+| POST | `/options/liquidate-smart` | Close losing option positions |
+| POST | `/options/liquidate-all` | Close all option positions |
+| POST | `/proposals/{proposal_id}/approve` | Approve a stored trade proposal |
+
+The dashboard polls portfolio, hedges, decisions, and status every eight seconds. Manual layer triggers are blocked while the kill switch is active. Toggling autonomous mode pauses or resumes scheduled execution without removing existing holdings or hedges.
+
+## Tests
+
+```bash
+source .venv/bin/activate
 pytest -v
 ```
-All unit and integration tests covering the Alpaca client wrapper, risk calculations, VWAP confirmation, LLM provider, three execution layers, and FastAPI routes run deterministically.
+
+The test suite isolates Alpaca access, uses a temporary SQLite database, and covers the client wrapper, API routes, scheduler kill switch, LLM behavior, trading layers, consistency rules, and VWAP/risk guardrails.

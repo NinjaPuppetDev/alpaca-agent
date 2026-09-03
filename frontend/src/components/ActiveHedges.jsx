@@ -18,13 +18,10 @@ export default function ActiveHedges({ hedgesData, loading }) {
   const getStructureBadge = (type) => {
     switch (type) {
       case 'protective_put':
-        return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
       case 'collar':
-        return 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30';
       case 'covered_call':
-        return 'bg-purple-500/10 text-purple-400 border-purple-500/30';
       case 'vertical_spread':
-        return 'bg-blue-500/10 text-blue-400 border-blue-500/30';
+        return 'bg-neutral-800 text-white border-neutral-700';
       default:
         return 'bg-slate-700/30 text-slate-300 border-slate-600/30';
     }
@@ -42,7 +39,7 @@ export default function ActiveHedges({ hedgesData, loading }) {
       {/* Header & Tabs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Shield className="w-5 h-5 text-emerald-400" />
+          <Shield className="w-5 h-5 text-neutral-100" />
           <h2 className="text-lg font-bold text-slate-100">Derivatives Overlay & Active Hedges</h2>
           {nearExpiryCount > 0 && (
             <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
@@ -57,7 +54,7 @@ export default function ActiveHedges({ hedgesData, loading }) {
           <button
             onClick={() => setFilter('all')}
             className={`px-3 py-1 rounded transition-colors ${
-              filter === 'all' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-400 hover:text-slate-200'
+              filter === 'all' ? 'bg-neutral-700 text-white font-semibold' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             All ({hedges.length})
@@ -65,7 +62,7 @@ export default function ActiveHedges({ hedgesData, loading }) {
           <button
             onClick={() => setFilter('open')}
             className={`px-3 py-1 rounded transition-colors ${
-              filter === 'open' ? 'bg-emerald-600 text-white font-semibold' : 'text-slate-400 hover:text-slate-200'
+              filter === 'open' ? 'bg-neutral-700 text-white font-semibold' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             Open ({openCount})
@@ -92,7 +89,7 @@ export default function ActiveHedges({ hedgesData, loading }) {
       {/* Expiration Watchdog Policy Alert */}
       <div className="text-xs bg-slate-950/60 border border-slate-800/80 rounded-lg p-3 text-slate-300 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span className="inline-block w-2 h-2 rounded-full bg-neutral-300"></span>
           <span>
             <strong className="text-slate-100">Watchdog Mandate:</strong> Automatic close or roll triggered at{' '}
             <span className="font-mono font-bold text-amber-400">≤ {hedges[0]?.threshold_days || 5} DTE</span>. Zero positions cross into final week.
@@ -156,7 +153,7 @@ export default function ActiveHedges({ hedgesData, loading }) {
                           <div key={idx} className="flex items-center gap-1.5 text-slate-300">
                             <span
                               className={`uppercase text-[10px] font-bold px-1 rounded ${
-                                leg.side === 'buy' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
+                                leg.side === 'buy' ? 'bg-neutral-700 text-white' : 'bg-neutral-600 text-white'
                               }`}
                             >
                               {leg.side}
@@ -194,9 +191,9 @@ export default function ActiveHedges({ hedgesData, loading }) {
                       <span
                         className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-sans uppercase font-bold ${
                           h.status === 'open'
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            ? 'bg-neutral-700 text-white border border-neutral-600'
                             : isRolled
-                            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                            ? 'bg-neutral-700 text-white border border-neutral-600'
                             : 'bg-slate-800 text-slate-400 border border-slate-700'
                         }`}
                       >

@@ -22,10 +22,14 @@ class AlpacaClient:
         secret_key: Optional[str] = None,
         paper: Optional[bool] = None
     ):
-        self.api_key = api_key or settings.ALPACA_API_KEY
-        self.secret_key = secret_key or settings.ALPACA_SECRET_KEY
-        self.paper = paper if paper is not None else settings.ALPACA_PAPER
-        self._is_live = bool(self.api_key and self.secret_key and len(self.api_key.strip()) > 5)
+        self.api_key = settings.ALPACA_API_KEY if api_key is None else api_key
+        self.secret_key = settings.ALPACA_SECRET_KEY if secret_key is None else secret_key
+        configured_paper = settings.ALPACA_PAPER if paper is None else paper
+        if paper is False:
+            raise RuntimeError("Live trading is not supported; paper must be true.")
+        self.paper = bool(configured_paper)
+        has_credentials = bool(self.api_key and self.secret_key and len(self.api_key.strip()) > 5)
+        self._is_live = bool(self.paper and has_credentials)
 
         self._trading_client = None
         self._stock_data_client = None
@@ -40,7 +44,7 @@ class AlpacaClient:
                 self._trading_client = TradingClient(
                     api_key=self.api_key,
                     secret_key=self.secret_key,
-                    paper=self.paper
+                    paper=True
                 )
                 self._stock_data_client = StockHistoricalDataClient(
                     api_key=self.api_key,
@@ -106,6 +110,7 @@ class AlpacaClient:
                 }
             except Exception as e:
                 logger.error(f"Error fetching Alpaca account: {e}")
+                raise RuntimeError("Live Alpaca account sync failed.") from e
 
         # Simulated fallback - ensure hydration if empty
         if not self._mock_positions:
@@ -148,6 +153,7 @@ class AlpacaClient:
                     return result
             except Exception as e:
                 logger.error(f"Error fetching Alpaca positions: {e}")
+                raise RuntimeError("Live Alpaca positions sync failed.") from e
 
         # Simulated fallback - ensure hydration if empty
         if not self._mock_positions:
@@ -395,7 +401,11 @@ class AlpacaClient:
                         "strike_price": float(c.strike_price),
                         "expiration_date": str(c.expiration_date),
                         "open_interest": int(c.open_interest or 0),
-                        "close_price": float(c.close_price or 0.0)
+                        "close_price": float(c.close_price or 0.0),
+                        # Contract metadata alone is not enough to prove liquidity. If
+                        # Alpaca does not provide a usable market, risk selection rejects it.
+                        "bid_price": float(getattr(c, "bid_price", 0.0) or 0.0),
+                        "ask_price": float(getattr(c, "ask_price", 0.0) or 0.0)
                     }
                     for c in contracts
                 ]
@@ -432,7 +442,9 @@ class AlpacaClient:
                     "strike_price": strike,
                     "expiration_date": exp_date_str,
                     "open_interest": 450,
-                    "close_price": round(cur_price * 0.035, 2)
+                    "close_price": round(cur_price * 0.035, 2),
+                    "bid_price": round(cur_price * 0.03, 2),
+                    "ask_price": round(cur_price * 0.04, 2)
                 })
         return contracts[:limit]
 
@@ -459,48 +471,7 @@ class AlpacaClient:
         if qty <= 0:
             return {"status": "skipped", "reason": "Quantity must be > 0"}
 
-        # Update local tracking
         px = self.get_latest_price(symbol)
-        cost = px * qty
-        if side.lower() == "buy":
-            self._mock_cash -= cost
-            if symbol in self._mock_positions:
-                old_qty = self._mock_positions[symbol]["qty"]
-                old_cost = self._mock_positions[symbol]["avg_entry_price"] * old_qty
-                new_qty = old_qty + qty
-                self._mock_positions[symbol] = {
-                    "symbol": symbol,
-                    "qty": new_qty,
-                    "avg_entry_price": round((old_cost + cost) / new_qty, 2),
-                    "current_price": px,
-                    "market_value": round(new_qty * px, 2),
-                    "unrealized_pl": round((px - (old_cost + cost) / new_qty) * new_qty, 2),
-                    "asset_class": "us_equity",
-                    "side": "long"
-                }
-            else:
-                self._mock_positions[symbol] = {
-                    "symbol": symbol,
-                    "qty": qty,
-                    "avg_entry_price": px,
-                    "current_price": px,
-                    "market_value": round(qty * px, 2),
-                    "unrealized_pl": 0.0,
-                    "asset_class": "us_equity",
-                    "side": "long"
-                }
-        else:  # sell
-            if symbol in self._mock_positions:
-                cur_qty = self._mock_positions[symbol]["qty"]
-                sell_qty = min(qty, cur_qty)
-                self._mock_cash += sell_qty * px
-                remaining = cur_qty - sell_qty
-                if remaining > 0:
-                    self._mock_positions[symbol]["qty"] = remaining
-                    self._mock_positions[symbol]["market_value"] = round(remaining * px, 2)
-                else:
-                    del self._mock_positions[symbol]
-
         if self._is_live and self._trading_client:
             try:
                 from alpaca.trading.requests import MarketOrderRequest, OrderSide, TimeInForce
@@ -521,6 +492,30 @@ class AlpacaClient:
                 }
             except Exception as e:
                 logger.error(f"Error submitting stock order for {symbol}: {e}")
+                return {"status": "FAILED_BROKER_REJECT", "symbol": symbol, "error": str(e)}
+
+        # Only the explicit offline simulator mutates simulated state. A failed live
+        # submission must never fall through to a fabricated fill.
+        cost = px * qty
+        if side.lower() == "buy":
+            self._mock_cash -= cost
+            if symbol in self._mock_positions:
+                old_qty = self._mock_positions[symbol]["qty"]
+                old_cost = self._mock_positions[symbol]["avg_entry_price"] * old_qty
+                new_qty = old_qty + qty
+                self._mock_positions[symbol] = {"symbol": symbol, "qty": new_qty, "avg_entry_price": round((old_cost + cost) / new_qty, 2), "current_price": px, "market_value": round(new_qty * px, 2), "unrealized_pl": round((px - (old_cost + cost) / new_qty) * new_qty, 2), "asset_class": "us_equity", "side": "long"}
+            else:
+                self._mock_positions[symbol] = {"symbol": symbol, "qty": qty, "avg_entry_price": px, "current_price": px, "market_value": round(qty * px, 2), "unrealized_pl": 0.0, "asset_class": "us_equity", "side": "long"}
+        elif symbol in self._mock_positions:
+            cur_qty = self._mock_positions[symbol]["qty"]
+            sell_qty = min(qty, cur_qty)
+            self._mock_cash += sell_qty * px
+            remaining = cur_qty - sell_qty
+            if remaining > 0:
+                self._mock_positions[symbol]["qty"] = remaining
+                self._mock_positions[symbol]["market_value"] = round(remaining * px, 2)
+            else:
+                del self._mock_positions[symbol]
 
         return {
             "id": f"sim-order-{symbol}-{int(datetime.now().timestamp())}",
@@ -571,6 +566,7 @@ class AlpacaClient:
                 }
             except Exception as e:
                 logger.error(f"Error submitting option order {symbol}: {e}")
+                return {"status": "FAILED_BROKER_REJECT", "symbol": symbol, "error": str(e)}
 
         # Simulated option order
         est_price = 3.50
@@ -654,6 +650,7 @@ class AlpacaClient:
                 }
             except Exception as e:
                 logger.error(f"Error closing position {symbol}: {e}")
+                return {"symbol": symbol, "status": "FAILED_BROKER_REJECT", "error": str(e)}
 
         # Simulated close
         if symbol in self._mock_positions:

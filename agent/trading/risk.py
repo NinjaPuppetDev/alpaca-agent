@@ -8,16 +8,16 @@ Enforces risk management rules for the derivatives overlay:
 """
 
 from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone
 import math
 import logging
 
 logger = logging.getLogger(__name__)
 
+# STRICT HEDGE ENFORCEMENT: Only protective puts allowed (downside protection only)
+# NO covered calls (upside sell-off), NO collars (complex multi-leg), NO vertical spreads
 ALLOWED_STRUCTURES = {
-    "protective_put",
-    "collar",
-    "covered_call",
-    "vertical_spread"
+    "protective_put"  # ONLY structure allowed: single-leg long put for downside floor
 }
 
 
@@ -171,171 +171,95 @@ def select_hedge_structure(
     current_price: float,
     option_contracts: List[Dict[str, Any]],
     underlying_symbol: str,
+    stock_qty: float,
     target_dte_days: int = 21
 ) -> Dict[str, Any]:
     """Selects and structures an options hedge overlay.
 
-    Allowed structures:
-    1. protective_put: downside hedge via 5-10% OTM long put
-    2. collar: protective put financed by selling 5-10% OTM call
-    3. covered_call: income generation / delta dampener in range-bound environments
-    4. vertical_spread: defined-risk bear put spread (long higher put, short lower put)
-
-    Strictly forbids butterflies, condors, or naked short options.
+    STRICT ENFORCEMENT: Only protective_put is allowed.
+    
+    This function implements a conservative downside-protection-only strategy:
+    - ALWAYS returns protective_put structure (single-leg long put)
+    - Disallows all other structures: NO collars, NO covered calls, NO spreads
+    - Disallows butterflies, condors, or any exotic multi-leg structures
+    - Disallows naked short options
 
     Args:
         exposure_shape: 'downside_risk', 'range_bound', 'high_volatility', or 'income_opportunity'
         current_price: Underlying current price
         option_contracts: Available option chain contracts
         underlying_symbol: Underlying ticker
+        stock_qty: Number of underlying shares held. Protective puts require exact
+            100-share coverage per contract; partial lots are rejected.
         target_dte_days: Target days to expiry
 
     Returns:
-        Hedge decision dict with structure_type, legs, and rationale.
+        Hedge decision dict with structure_type='protective_put', single long put leg, and rationale.
     """
-    # Map exposure shape to allowed structure
-    if exposure_shape in ("downside_risk", "high_volatility"):
-        structure_type = "protective_put" if current_price < 100 else "collar"
-    elif exposure_shape == "range_bound":
-        structure_type = "covered_call"
-    elif exposure_shape == "defined_downside":
-        structure_type = "vertical_spread"
-    else:
-        structure_type = "protective_put"
-
+    # STRICT ENFORCEMENT: Always use protective_put regardless of exposure shape.
+    structure_type = "protective_put"
+    
     if structure_type not in ALLOWED_STRUCTURES:
         raise ValueError(f"Disallowed options structure: {structure_type}")
 
-    puts = [c for c in option_contracts if c.get("type") == "put"]
-    calls = [c for c in option_contracts if c.get("type") == "call"]
+    if stock_qty < 100 or stock_qty % 100 != 0:
+        return {
+            "underlying_symbol": underlying_symbol,
+            "structure_type": structure_type,
+            "legs": [],
+            "rationale": f"Rejected hedge for {underlying_symbol}: {stock_qty} shares cannot be covered by exact 100-share option contracts.",
+            "rejection": "UNHEDGED_REMAINDER_OR_SUB_LOT",
+        }
+
+    now = datetime.now(timezone.utc).date()
+    liquid_puts = []
+    for contract in option_contracts:
+        if contract.get("type") != "put" or int(contract.get("open_interest", 0) or 0) <= 0:
+            continue
+        bid = float(contract.get("bid_price", 0) or 0)
+        ask = float(contract.get("ask_price", 0) or 0)
+        if bid <= 0 or ask <= 0 or bid > ask:
+            continue
+        try:
+            expiry = datetime.fromisoformat(str(contract["expiration_date"])).date()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 14 <= (expiry - now).days <= 45:
+            liquid_puts.append(contract)
 
     legs: List[Dict[str, Any]] = []
     rationale = ""
 
-    if structure_type == "protective_put":
-        # Target ~5% OTM Put (strike <= current_price * 0.95)
-        otm_puts = sorted(
-            puts,
-            key=lambda c: abs(c.get("strike_price", 0.0) - (current_price * 0.95))
-        )
-        selected = otm_puts[0] if otm_puts else {
-            "symbol": f"{underlying_symbol}PUT_{round(current_price * 0.95, 1)}",
-            "strike_price": round(current_price * 0.95, 1),
-            "expiration_date": "2026-09-18",
-            "type": "put"
+    # SINGLE STRUCTURE: Protective Put only
+    # Target ~5% OTM Put (strike <= current_price * 0.95)
+    otm_puts = sorted(
+        liquid_puts,
+        key=lambda c: abs(c.get("strike_price", 0.0) - (current_price * 0.95))
+    )
+    if not otm_puts:
+        return {
+            "underlying_symbol": underlying_symbol,
+            "structure_type": structure_type,
+            "legs": [],
+            "rationale": f"Rejected hedge for {underlying_symbol}: no liquid put with 14-45 DTE was available.",
+            "rejection": "NO_LIQUID_CONTRACT",
         }
-        legs.append({
-            "symbol": selected["symbol"],
-            "type": "put",
-            "strike": selected["strike_price"],
-            "side": "buy",
-            "qty": 1,
-            "expiration_date": selected.get("expiration_date", "")
-        })
-        rationale = (
-            f"Protective Put overlay: Bought 1x {selected['strike_price']} strike put "
-            f"on {underlying_symbol} to establish strict downside floor."
-        )
-
-    elif structure_type == "collar":
-        # Buy ~5% OTM Put, Sell ~5-8% OTM Call
-        otm_puts = sorted(puts, key=lambda c: abs(c.get("strike_price", 0.0) - (current_price * 0.95)))
-        otm_calls = sorted(calls, key=lambda c: abs(c.get("strike_price", 0.0) - (current_price * 1.05)))
-
-        put_leg = otm_puts[0] if otm_puts else {
-            "symbol": f"{underlying_symbol}PUT_{round(current_price * 0.95, 1)}",
-            "strike_price": round(current_price * 0.95, 1),
-            "expiration_date": "2026-09-18",
-            "type": "put"
-        }
-        call_leg = otm_calls[0] if otm_calls else {
-            "symbol": f"{underlying_symbol}CALL_{round(current_price * 1.05, 1)}",
-            "strike_price": round(current_price * 1.05, 1),
-            "expiration_date": "2026-09-18",
-            "type": "call"
-        }
-
-        legs.append({
-            "symbol": put_leg["symbol"],
-            "type": "put",
-            "strike": put_leg["strike_price"],
-            "side": "buy",
-            "qty": 1,
-            "expiration_date": put_leg.get("expiration_date", "")
-        })
-        legs.append({
-            "symbol": call_leg["symbol"],
-            "type": "call",
-            "strike": call_leg["strike_price"],
-            "side": "sell",
-            "qty": 1,
-            "expiration_date": call_leg.get("expiration_date", "")
-        })
-        rationale = (
-            f"Zero/Low-cost Collar overlay on {underlying_symbol}: Bought {put_leg['strike_price']} put "
-            f"funded by selling {call_leg['strike_price']} call."
-        )
-
-    elif structure_type == "covered_call":
-        # Sell ~5-10% OTM Call
-        otm_calls = sorted(calls, key=lambda c: abs(c.get("strike_price", 0.0) - (current_price * 1.05)))
-        selected = otm_calls[0] if otm_calls else {
-            "symbol": f"{underlying_symbol}CALL_{round(current_price * 1.05, 1)}",
-            "strike_price": round(current_price * 1.05, 1),
-            "expiration_date": "2026-09-18",
-            "type": "call"
-        }
-        legs.append({
-            "symbol": selected["symbol"],
-            "type": "call",
-            "strike": selected["strike_price"],
-            "side": "sell",
-            "qty": 1,
-            "expiration_date": selected.get("expiration_date", "")
-        })
-        rationale = (
-            f"Covered Call overlay on {underlying_symbol}: Sold 1x {selected['strike_price']} call "
-            f"to harvest premium and buffer against range-bound stagnation."
-        )
-
-    elif structure_type == "vertical_spread":
-        # Bear Put Spread: Long higher strike put, Short lower strike put
-        otm_long_puts = sorted(puts, key=lambda c: abs(c.get("strike_price", 0.0) - (current_price * 0.98)))
-        otm_short_puts = sorted(puts, key=lambda c: abs(c.get("strike_price", 0.0) - (current_price * 0.90)))
-
-        long_p = otm_long_puts[0] if otm_long_puts else {
-            "symbol": f"{underlying_symbol}PUT_{round(current_price * 0.98, 1)}",
-            "strike_price": round(current_price * 0.98, 1),
-            "expiration_date": "2026-09-18",
-            "type": "put"
-        }
-        short_p = otm_short_puts[0] if otm_short_puts else {
-            "symbol": f"{underlying_symbol}PUT_{round(current_price * 0.90, 1)}",
-            "strike_price": round(current_price * 0.90, 1),
-            "expiration_date": "2026-09-18",
-            "type": "put"
-        }
-
-        legs.append({
-            "symbol": long_p["symbol"],
-            "type": "put",
-            "strike": long_p["strike_price"],
-            "side": "buy",
-            "qty": 1,
-            "expiration_date": long_p.get("expiration_date", "")
-        })
-        legs.append({
-            "symbol": short_p["symbol"],
-            "type": "put",
-            "strike": short_p["strike_price"],
-            "side": "sell",
-            "qty": 1,
-            "expiration_date": short_p.get("expiration_date", "")
-        })
-        rationale = (
-            f"Bear Put Vertical Spread on {underlying_symbol}: Bought {long_p['strike_price']} put "
-            f"and sold {short_p['strike_price']} put for defined downside protection at reduced net debit."
-        )
+    selected = otm_puts[0]
+    legs.append({
+        "symbol": selected["symbol"],
+        "type": "put",
+        "strike": selected["strike_price"],
+        "side": "buy",
+        "qty": int(stock_qty // 100),
+        "expiration_date": selected.get("expiration_date", "")
+    })
+    
+    rationale = (
+        f"STRICT PROTECTIVE PUT OVERLAY (single-leg downside floor only): "
+        f"Bought {int(stock_qty // 100)}x {selected['strike_price']} strike put(s) on {underlying_symbol}. "
+        f"Exposure shape was '{exposure_shape}' but ENFORCED protective_put per risk mandate. "
+        f"NO covered calls, NO collars, NO spreads allowed."
+    )
 
     return {
         "underlying_symbol": underlying_symbol,

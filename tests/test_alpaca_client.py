@@ -4,8 +4,8 @@ import pytest
 from agent.trading.alpaca_client import AlpacaClient
 
 
-def test_alpaca_client_account_and_price():
-    client = AlpacaClient()
+def test_alpaca_client_account_and_price(isolated_broker):
+    client = isolated_broker
     account = client.get_account()
     assert "cash" in account
     assert "equity" in account
@@ -16,8 +16,8 @@ def test_alpaca_client_account_and_price():
     assert price > 0
 
 
-def test_alpaca_client_news_and_bars():
-    client = AlpacaClient()
+def test_alpaca_client_news_and_bars(isolated_broker):
+    client = isolated_broker
     news = client.get_news(limit=5)
     assert len(news) > 0
     assert "headline" in news[0]
@@ -28,8 +28,8 @@ def test_alpaca_client_news_and_bars():
     assert "vwap" in bars[0]
 
 
-def test_alpaca_client_options_and_orders():
-    client = AlpacaClient()
+def test_alpaca_client_options_and_orders(isolated_broker):
+    client = isolated_broker
     contracts = client.get_option_contracts("NVDA", option_type="put")
     assert len(contracts) > 0
     assert contracts[0]["type"] == "put"

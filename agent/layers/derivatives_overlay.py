@@ -24,13 +24,21 @@ from agent.trading.alpaca_client import get_alpaca_client, AlpacaClient
 from agent.trading.risk import (
     calculate_portfolio_exposure,
     confirm_signal_with_vwap,
-    select_hedge_structure
+    select_hedge_structure,
+    calculate_vwap,
 )
 from agent.llm.provider import get_llm_provider, LLMProvider
 from agent.data.db import SessionLocal
 from agent.data.models import Hedge, DecisionLog
+from agent.risk.vwap_guard import evaluate_vwap_and_tp
+from agent.execution_pipeline import validate_option_overlay_legs
 
 logger = logging.getLogger(__name__)
+
+
+def _all_orders_filled(order_results: List[Dict[str, Any]]) -> bool:
+    """Only broker-confirmed fills are eligible for persistent hedge state."""
+    return bool(order_results) and all(order.get("status") == "filled" for order in order_results)
 
 
 def evaluate_ticker_risk(
@@ -157,6 +165,19 @@ def run_derivatives_overlay_layer(
             eval_res = evaluate_ticker_risk(sym, client, llm)
             evaluations.append(eval_res)
 
+            current_price = float(eq.get("current_price", client.get_latest_price(sym)))
+            vwap_price = float(
+                calculate_vwap(client.get_bars(symbol=sym, timeframe_str="1Hour", limit=24) or [])
+                if client.get_bars(symbol=sym, timeframe_str="1Hour", limit=24)
+                else current_price
+            )
+            guard = evaluate_vwap_and_tp(eq, current_price, vwap_price)
+            if guard.get("is_chasing"):
+                logger.info(f"{sym} is chasing intraday VWAP; skipping hedge placement.")
+                evaluations[-1]["vwap_guard"] = guard
+                evaluations[-1]["rationale"] = f"VWAP chase guard triggered: {guard['notes']}"
+                continue
+
             # If risk requires hedging and ticker does not already have an open hedge
             if eval_res["exposure_shape"] in ("downside_risk", "range_bound", "defined_downside", "high_volatility"):
                 if sym in hedged_tickers:
@@ -169,12 +190,27 @@ def run_derivatives_overlay_layer(
                     exposure_shape=eval_res["exposure_shape"],
                     current_price=eval_res["current_price"],
                     option_contracts=chain,
-                    underlying_symbol=sym
+                    underlying_symbol=sym,
+                    stock_qty=float(eq.get("qty", 0)),
                 )
 
                 # Execute option order(s)
                 if hedge_spec.get("legs"):
+                    leg_guard = validate_option_overlay_legs(hedge_spec["legs"])
+                    if not leg_guard["approved"]:
+                        evaluations[-1]["rationale"] = leg_guard["reason"]
+                        continue
                     order_results = client.place_multi_leg_option_order(hedge_spec["legs"])
+                    if not _all_orders_filled(order_results):
+                        failure_reason = "; ".join(str(order.get("error", order.get("status"))) for order in order_results)
+                        db_session.add(DecisionLog(
+                            timestamp=datetime.now(timezone.utc),
+                            layer="overlay",
+                            input_summary={"symbol": sym, "order_results": order_results},
+                            reasoning="Broker did not confirm every protective-put leg.",
+                            action_taken=f"FAILED_BROKER_REJECT: hedge for {sym} was not persisted. {failure_reason}",
+                        ))
+                        continue
                     
                     # Compute expiration date
                     exp_date_str = hedge_spec.get("expires_at", (datetime.now(timezone.utc) + timedelta(days=21)).strftime("%Y-%m-%d"))
@@ -204,6 +240,8 @@ def run_derivatives_overlay_layer(
                         "rationale": hedge_spec["rationale"],
                         "order_results": order_results
                     })
+                elif hedge_spec.get("rejection"):
+                    evaluations[-1]["rationale"] = hedge_spec["rationale"]
 
         # Summary audit log
         if hedges_created:

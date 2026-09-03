@@ -17,7 +17,8 @@ export default function PortfolioOverview({ portfolioData, loading }) {
 
   const account = portfolioData?.account || { equity: 100000, cash: 100000, buying_power: 200000 };
   const themes = portfolioData?.themes || [];
-  const positions = portfolioData?.positions || [];
+  const positions = (portfolioData?.positions || []).filter((p) => p.asset_class !== 'us_option');
+  const optionPositions = portfolioData?.option_positions || [];
 
   return (
     <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm flex flex-col gap-6">
@@ -112,8 +113,9 @@ export default function PortfolioOverview({ portfolioData, loading }) {
       <div className="border-t border-slate-100 pt-5">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
-            Current Holdings
+            Equity Holdings
           </span>
+          <span className="text-[11px] font-mono text-neutral-400">Broker source of truth</span>
         </div>
 
         <div className="overflow-x-auto border border-neutral-200/80 rounded-xl">
@@ -138,17 +140,11 @@ export default function PortfolioOverview({ portfolioData, loading }) {
               ) : (
                 positions.map((p) => {
                   const isProfit = (p.unrealized_pl || 0) >= 0;
-                  const isOption = p.asset_class === 'us_option';
                   return (
                     <tr key={p.symbol} className="hover:bg-neutral-50/80 transition-colors">
                       <td className="py-2.5 px-3.5 font-bold text-neutral-900">
                         <div className="flex items-center gap-1.5">
                           <span>{p.symbol}</span>
-                          {isOption && (
-                            <span className="px-1.5 py-0.2 rounded text-[10px] font-sans font-medium bg-neutral-100 text-neutral-600 border border-neutral-200">
-                              Option
-                            </span>
-                          )}
                         </div>
                       </td>
                       <td className="py-2.5 px-3 text-right text-neutral-600">
@@ -165,7 +161,7 @@ export default function PortfolioOverview({ portfolioData, loading }) {
                       </td>
                       <td
                         className={`py-2.5 px-3.5 text-right font-semibold ${
-                          isProfit ? 'text-emerald-600' : 'text-rose-600'
+                          isProfit ? 'text-emerald-600' : 'text-amber-600'
                         }`}
                       >
                         {isProfit ? '+' : ''}${p.unrealized_pl?.toFixed(2)}
@@ -177,6 +173,54 @@ export default function PortfolioOverview({ portfolioData, loading }) {
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="border-t border-slate-100 pt-5">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Live Option Positions
+          </span>
+          <span className="text-[11px] font-mono text-neutral-400">
+            {optionPositions.length} {optionPositions.length === 1 ? 'Contract' : 'Contracts'}
+          </span>
+        </div>
+        <div className="overflow-x-auto border border-neutral-200/80 rounded-xl">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-neutral-50 text-neutral-500 uppercase font-semibold text-[11px] border-b border-neutral-200/80">
+              <tr>
+                <th className="py-2.5 px-3.5">Contract</th>
+                <th className="py-2.5 px-3 text-right">Qty</th>
+                <th className="py-2.5 px-3 text-right">Price</th>
+                <th className="py-2.5 px-3 text-right">Value</th>
+                <th className="py-2.5 px-3.5 text-right">P&L</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-violet-100 font-mono text-neutral-700">
+              {optionPositions.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-6 text-center text-neutral-400 font-sans">
+                    No live option contracts held. Hedge overlays are shown below.
+                  </td>
+                </tr>
+              ) : (
+                optionPositions.map((p) => (
+                  <tr key={p.symbol} className="hover:bg-neutral-50/80 transition-colors">
+                    <td className="py-2.5 px-3.5 font-bold text-neutral-900">{p.symbol}</td>
+                    <td className="py-2.5 px-3 text-right">{p.qty?.toLocaleString('en-US', { maximumFractionDigits: 2 })}</td>
+                    <td className="py-2.5 px-3 text-right">${p.current_price?.toFixed(2)}</td>
+                    <td className="py-2.5 px-3 text-right font-semibold">${p.market_value?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className={`py-2.5 px-3.5 text-right font-semibold ${(p.unrealized_pl || 0) >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {(p.unrealized_pl || 0) >= 0 ? '+' : ''}${p.unrealized_pl?.toFixed(2)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[11px] text-neutral-500 mt-2">
+          These contracts are fetched directly from Alpaca and are intentionally separate from equity holdings and database-tracked hedge plans.
+        </p>
       </div>
     </div>
   );

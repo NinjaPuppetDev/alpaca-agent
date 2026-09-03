@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Settings, CheckCircle2, AlertCircle, Power } from 'lucide-react';
 import PortfolioOverview from './components/PortfolioOverview.jsx';
+import TradingControlDashboard from './components/TradingControlDashboard.jsx';
 import DecisionLogFeed from './components/DecisionLogFeed.jsx';
 import HowItWorksAccordion from './components/HowItWorksAccordion.jsx';
 import DevControlsModal from './components/DevControlsModal.jsx';
@@ -149,11 +150,11 @@ export default function App() {
             }`}
             title="Toggle autonomous scheduling on or off"
           >
-            <Power className={`w-3.5 h-3.5 ${autonomousMode ? 'text-emerald-400' : 'text-[#F5A623]'}`} />
+            <Power className={`w-3.5 h-3.5 ${autonomousMode ? 'text-white' : 'text-[#F5A623]'}`} />
             <span>Autonomous Mode: {autonomousMode ? 'ON' : 'OFF (PAUSED)'}</span>
             <span
               className={`w-2 h-2 rounded-full ${
-                autonomousMode ? 'bg-emerald-400 animate-pulse' : 'bg-[#F5A623]'
+                autonomousMode ? 'bg-white animate-pulse' : 'bg-[#F5A623]'
               }`}
             ></span>
           </button>
@@ -168,7 +169,7 @@ export default function App() {
           >
             <span
               className={`w-2 h-2 rounded-full ${
-                autonomousMode ? 'bg-emerald-500' : 'bg-[#F5A623]'
+                autonomousMode ? 'bg-neutral-700' : 'bg-[#F5A623]'
               }`}
             ></span>
             <span className="font-mono text-[11px]">
@@ -207,11 +208,15 @@ export default function App() {
             className={`flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg border text-xs font-semibold ${
               toastMessage.type === 'error'
                 ? 'bg-rose-50 border-rose-200 text-rose-900'
+                : toastMessage.type === 'warning'
+                ? 'bg-amber-50 border-amber-200 text-amber-900'
                 : 'bg-emerald-50 border-emerald-200 text-emerald-900'
             }`}
           >
             {toastMessage.type === 'error' ? (
               <AlertCircle className="w-4 h-4 text-rose-600" />
+            ) : toastMessage.type === 'warning' ? (
+              <AlertCircle className="w-4 h-4 text-amber-600" />
             ) : (
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
             )}
@@ -222,6 +227,15 @@ export default function App() {
 
       {/* Main Content Layout */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 flex flex-col gap-6">
+        {/* Trading Control Dashboard (Top) */}
+        <div className="w-full">
+          <TradingControlDashboard
+            onLiquidationComplete={fetchAllData}
+            showToast={showToast}
+            statusData={statusData}
+          />
+        </div>
+
         {/* Two-Column Primary View */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Primary Panel 1: Portfolio Overview (Left Column, narrower 5/12) */}

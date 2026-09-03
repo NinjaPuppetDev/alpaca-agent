@@ -13,6 +13,7 @@ from agent.api.routes import router as api_router
 from agent.scheduler import start_scheduler, stop_scheduler
 from agent.layers.theme_portfolio import run_theme_portfolio_layer
 from agent.layers.derivatives_overlay import run_derivatives_overlay_layer
+from agent.execution_pipeline import run_execution_pipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,8 +42,12 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle manager."""
     logger.info("Initializing Alpaca Options Overlay Agent...")
     init_db()
-    seed_initial_state_if_empty()
-    start_scheduler()
+    # Never bootstrap or schedule trading unless the operator explicitly opts in.
+    if settings.AUTONOMOUS_MODE:
+        seed_initial_state_if_empty()
+        start_scheduler()
+    else:
+        logger.warning("AUTONOMOUS_MODE is not enabled; skipping bootstrap and scheduler startup.")
     yield
     logger.info("Shutting down agent services...")
     stop_scheduler()
@@ -61,7 +66,7 @@ from fastapi.staticfiles import StaticFiles
 # Enable CORS for React frontend (Vite default port 5173, 3000, etc.)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

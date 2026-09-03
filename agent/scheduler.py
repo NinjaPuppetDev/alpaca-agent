@@ -21,12 +21,17 @@ logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
 
 # Global state for Autonomous Mode (Kill Switch)
-_autonomous_mode_active: bool = True
+_autonomous_mode_active: bool = settings.AUTONOMOUS_MODE
 
 
 def is_autonomous_mode_active() -> bool:
     """Returns True if autonomous scheduling and order execution is active."""
     return _autonomous_mode_active
+
+
+def is_kill_switch_active() -> bool:
+    """The kill switch blocks both scheduled and manually requested execution."""
+    return not _autonomous_mode_active
 
 
 def set_autonomous_mode(enabled: bool, db: Optional[Session] = None) -> Dict[str, Any]:
@@ -53,6 +58,8 @@ def set_autonomous_mode(enabled: bool, db: Optional[Session] = None) -> Dict[str
         if _autonomous_mode_active:
             if scheduler.running and scheduler.state == 2:  # STATE_PAUSED
                 scheduler.resume()
+            elif not scheduler.running:
+                start_scheduler()
             logger.info("Autonomous mode RESUMED by operator.")
 
             action_text = "Autonomous Mode RESUMED by operator"

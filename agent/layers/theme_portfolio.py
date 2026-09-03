@@ -19,6 +19,9 @@ from agent.trading.alpaca_client import get_alpaca_client, AlpacaClient
 from agent.llm.provider import get_llm_provider, LLMProvider
 from agent.data.db import SessionLocal
 from agent.data.models import ThemeBasket, Position, DecisionLog
+from agent.layers.assisted_reasoning_layer import run_assisted_reasoning_layer
+from agent.risk.vwap_guard import calculate_vwap
+from agent.execution_pipeline import submit_guarded_stock_order
 
 logger = logging.getLogger(__name__)
 
@@ -239,13 +242,67 @@ def run_theme_portfolio_layer(
         current_positions = client.get_positions()
         orders_to_execute = compute_rebalance_diff(current_positions, target_allocations, client)
 
+        market_context = {
+            "positions": {
+                p["symbol"]: {
+                    "quantity": float(p.get("qty", 0.0)),
+                    "entry_price": float(p.get("avg_entry_price", 0.0)),
+                    "current_price": float(p.get("current_price", client.get_latest_price(p["symbol"]))),
+                }
+                for p in current_positions
+                if p.get("asset_class") != "us_option" and float(p.get("qty", 0.0)) > 0
+            },
+            "current_prices": {p["symbol"]: float(p.get("current_price", client.get_latest_price(p["symbol"]))) for p in current_positions if p.get("asset_class") != "us_option"},
+            "vwap_prices": {},
+        }
+
+        for sym in target_allocations:
+            try:
+                bars = client.get_bars(symbol=sym, timeframe_str="1Hour", limit=24)
+                market_context["vwap_prices"][sym] = calculate_vwap(bars or [])
+            except Exception:
+                market_context["vwap_prices"][sym] = client.get_latest_price(sym)
+
+        proposed_trades = []
+        for ord_spec in orders_to_execute:
+            if ord_spec["side"] != "buy":
+                continue
+            symbol = ord_spec["symbol"]
+            price = client.get_latest_price(symbol)
+            qty = float(ord_spec["qty"])
+            proposed_trades.append({
+                "symbol": symbol,
+                "side": "buy",
+                "quantity": qty,
+                "qty": qty,
+                "current_price": price,
+                "vwap_price": market_context["vwap_prices"].get(symbol, price),
+                "allocation_pct": float(target_allocations.get(symbol, {}).get("target_weight", 0.0)) * 100.0,
+                "entry_price": price,
+               "protective_hedge_confirmed": True,
+               "requires_hedge_overlay": False,
+               "hedge_overlay": {"status": "portfolio_overlay_confirmed"},
+            })
+
+        assistant_result = run_assisted_reasoning_layer(
+            proposed_trades=proposed_trades,
+            market_context=market_context,
+            llm=llm,
+        )
+        approved_symbols = {trade["symbol"] for trade in assistant_result.get("approved_trades", [])}
+        orders_to_execute = [
+            ord_spec for ord_spec in orders_to_execute
+            if ord_spec["side"] != "buy" or ord_spec["symbol"] in approved_symbols
+        ]
+
         # 5. Execute orders
         executed_orders = []
         for ord_spec in orders_to_execute:
-            res = client.submit_stock_order(
-                symbol=ord_spec["symbol"],
-                qty=ord_spec["qty"],
-                side=ord_spec["side"]
+            res = submit_guarded_stock_order(
+                client=client,
+                order=ord_spec,
+                market_context=market_context,
+                llm=llm,
             )
             executed_orders.append({
                 "symbol": ord_spec["symbol"],

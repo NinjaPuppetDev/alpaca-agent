@@ -3,7 +3,6 @@
 Reads settings from environment variables and provides typed access across modules.
 """
 
-from typing import Union
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 
@@ -20,7 +19,7 @@ class Settings(BaseSettings):
     # Alpaca credentials
     ALPACA_API_KEY: str = Field(default="", description="Alpaca API Key ID")
     ALPACA_SECRET_KEY: str = Field(default="", description="Alpaca API Secret Key")
-    ALPACA_PAPER: Union[bool, str] = Field(default=True, description="Whether to use Alpaca Paper Trading")
+    ALPACA_PAPER: bool = Field(default=True, description="Whether Alpaca paper trading is explicitly enabled")
 
     @field_validator("ALPACA_PAPER", mode="before")
     @classmethod
@@ -47,6 +46,9 @@ class Settings(BaseSettings):
         default="medium",
         description="Configurable reasoning effort for models like openai/gpt-oss-120b (low/medium/high)"
     )
+
+    # Autonomous execution is opt-in. The server starts in a safe, paused state.
+    AUTONOMOUS_MODE: bool = Field(default=False, description="Explicitly enable scheduled autonomous execution")
 
     # Strategy cadences & risk parameters
     EXPIRATION_THRESHOLD_DAYS: int = Field(

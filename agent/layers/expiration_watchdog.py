@@ -21,8 +21,13 @@ from agent.trading.risk import select_hedge_structure
 from agent.llm.provider import get_llm_provider, LLMProvider
 from agent.data.db import SessionLocal
 from agent.data.models import Hedge, DecisionLog
+from agent.execution_pipeline import validate_option_overlay_legs
 
 logger = logging.getLogger(__name__)
+
+
+def _all_orders_filled(results: List[Dict[str, Any]]) -> bool:
+    return bool(results) and all(result.get("status") in {"filled", "closed"} for result in results)
 
 
 def calculate_days_to_expiry(expires_at: datetime) -> int:
@@ -62,7 +67,7 @@ def run_expiration_watchdog_layer(
         open_hedges = db_session.query(Hedge).filter(Hedge.status == "open").all()
         current_positions = client.get_positions()
         held_equities = {
-            p["symbol"] for p in current_positions
+            p["symbol"]: float(p.get("qty", 0)) for p in current_positions
             if p.get("asset_class") != "us_option" and p.get("qty", 0) > 0
         }
 
@@ -97,6 +102,17 @@ def run_expiration_watchdog_layer(
                         res = client.close_position(sym)
                         close_results.append(res)
 
+                if not _all_orders_filled(close_results):
+                    failure_reason = "; ".join(str(result.get("error", result.get("status"))) for result in close_results)
+                    db_session.add(DecisionLog(
+                        timestamp=now,
+                        layer="watchdog",
+                        input_summary={"hedge_id": hedge.id, "close_results": close_results},
+                        reasoning="Near-expiry hedge close was not fully broker-confirmed.",
+                        action_taken=f"FAILED_BROKER_REJECT: hedge #{hedge.id} remains open. {failure_reason}",
+                    ))
+                    continue
+
                 # 2. Decide: ROLL or CLOSE
                 if is_equity_held:
                     # Still holding stock -> Roll out to a fresh 21-30 DTE contract
@@ -108,12 +124,36 @@ def run_expiration_watchdog_layer(
                         current_price=cur_px,
                         option_contracts=chain,
                         underlying_symbol=underlying,
+                        stock_qty=held_equities[underlying],
                         target_dte_days=21
                     )
 
                     roll_order_results = []
                     if new_hedge_spec.get("legs"):
+                        leg_guard = validate_option_overlay_legs(new_hedge_spec["legs"])
+                        if not leg_guard["approved"]:
+                            db_session.add(DecisionLog(
+                                timestamp=now,
+                                layer="watchdog",
+                                input_summary={"hedge_id": hedge.id},
+                                reasoning=leg_guard["reason"],
+                                action_taken=f"FAILED_GUARDRAIL: replacement hedge for #{hedge.id} was not submitted.",
+                            ))
+                            continue
                         roll_order_results = client.place_multi_leg_option_order(new_hedge_spec["legs"])
+                    if not _all_orders_filled(roll_order_results):
+                        failure_reason = "; ".join(str(result.get("error", result.get("status"))) for result in roll_order_results)
+                        hedge.status = "closed"
+                        hedge.closed_at = now
+                        hedge.notes = f"{hedge.notes or ''} | Closed at {dte} DTE; replacement hedge was rejected."
+                        db_session.add(DecisionLog(
+                            timestamp=now,
+                            layer="watchdog",
+                            input_summary={"hedge_id": hedge.id, "roll_results": roll_order_results},
+                            reasoning="Replacement hedge was not fully broker-confirmed after close.",
+                            action_taken=f"FAILED_BROKER_REJECT: hedge #{hedge.id} was closed but not rolled. {failure_reason}",
+                        ))
+                        continue
 
                     # Update existing hedge as rolled
                     hedge.status = "rolled"

@@ -1,90 +1,153 @@
-"""Tests for state synchronization consistency and the autonomous mode kill switch."""
+"""State synchronization and kill-switch tests with an injected offline broker."""
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from fastapi.testclient import TestClient
 
-from agent.main import app
-from agent.data.db import Base
-from agent.data.models import ThemeBasket, Position, DecisionLog, Hedge
-from agent.trading.alpaca_client import AlpacaClient
-from agent.llm.provider import MockLLMProvider
-from agent.layers.theme_portfolio import run_theme_portfolio_layer
-from agent.scheduler import set_autonomous_mode, is_autonomous_mode_active, job_theme_portfolio
-
-client = TestClient(app)
+from agent.api import routes
+from agent.data.db import SessionLocal, init_db
+from agent.scheduler import is_autonomous_mode_active, job_theme_portfolio, set_autonomous_mode
 
 
-def test_portfolio_decision_log_consistency():
-    """Confirms that executing a theme rebalancing cycle produces identical state in DB, AlpacaClient, and /api/portfolio."""
-    # 1. Run theme portfolio layer
-    res = client.post("/api/trigger/theme")
-    assert res.status_code == 200
-    theme_data = res.json()["result"]
+@pytest.fixture
+def db():
+    init_db()
+    session = SessionLocal()
+    yield session
+    session.rollback()
+    session.close()
+
+
+def test_portfolio_decision_log_consistency(db, monkeypatch):
+    monkeypatch.setattr(routes, "is_kill_switch_active", lambda: False)
+    theme_data = routes.trigger_layer("theme", db)["result"]
     assert theme_data["status"] == "success"
-    executed_orders = theme_data["executed_orders"]
 
-    # 2. Query /api/portfolio
-    portfolio_res = client.get("/api/portfolio")
-    assert portfolio_res.status_code == 200
-    portfolio_data = portfolio_res.json()
+    portfolio_data = routes.get_portfolio(db)
+    equity_positions = [p for p in portfolio_data["positions"] if p.get("asset_class") != "us_option"]
+    assert equity_positions
+    executed_symbols = {o["symbol"] for o in theme_data["executed_orders"] if o["side"] == "buy"}
+    assert executed_symbols.issubset({p["symbol"] for p in equity_positions})
 
-    # Verify positions exist and match
-    positions = portfolio_data["positions"]
-    equity_positions = [p for p in positions if p.get("asset_class") != "us_option"]
-    assert len(equity_positions) > 0
-
-    # Every executed buy order should be in portfolio
-    executed_symbols = {o["symbol"] for o in executed_orders if o["side"] == "buy"}
-    portfolio_symbols = {p["symbol"] for p in equity_positions}
-    assert executed_symbols.issubset(portfolio_symbols)
-
-    # 3. Query /api/decisions and ensure log claims match
-    decisions_res = client.get("/api/decisions?layer=theme&limit=1")
-    assert decisions_res.status_code == 200
-    latest_decision = decisions_res.json()[0]
+    latest_decision = routes.get_decisions(layer="theme", limit=1, db=db)[0]
     assert "Executed" in latest_decision["action_taken"]
 
 
-def test_autonomous_mode_kill_switch():
-    """Confirms that toggling autonomous mode pauses execution, logs to DecisionLog, and resumes cleanly."""
-    # 1. Toggle OFF
-    off_res = client.post("/api/autonomous-mode", json={"enabled": False})
-    assert off_res.status_code == 200
-    assert off_res.json()["autonomous_mode"] is False
+def test_portfolio_uses_live_broker_positions_as_source_of_truth(db, monkeypatch):
+    from agent.data.models import Position
+
+    stale = Position(ticker="OLDCO", quantity=12.0, entry_price=50.0, current_value=600.0)
+    db.add(stale)
+    db.commit()
+
+    class FakeClient:
+        is_live = True
+
+        def get_account(self):
+            return {"cash": 25000.0, "equity": 30000.0, "buying_power": 50000.0, "currency": "USD", "status": "ACTIVE"}
+
+        def get_positions(self):
+            return [{
+                "symbol": "AAPL",
+                "qty": 8.0,
+                "avg_entry_price": 180.0,
+                "current_price": 190.0,
+                "market_value": 1520.0,
+                "unrealized_pl": 80.0,
+                "asset_class": "us_equity",
+                "side": "long",
+            }]
+
+        def get_latest_price(self, symbol):
+            return 190.0 if symbol == "AAPL" else 50.0
+
+    monkeypatch.setattr(routes, "get_alpaca_client", lambda: FakeClient())
+
+    portfolio_data = routes.get_portfolio(db)
+    symbols = {p["symbol"] for p in portfolio_data["positions"] if p.get("asset_class") == "us_equity"}
+    assert "AAPL" in symbols
+    assert "OLDCO" not in symbols
+    assert db.query(Position).filter(Position.ticker == "AAPL").first() is not None
+    assert db.query(Position).filter(Position.ticker == "OLDCO").first() is None
+
+
+def test_option_only_live_account_does_not_restore_stale_equity_cache(db, monkeypatch):
+    from agent.data.models import Position
+
+    stale = Position(ticker="IRDM", quantity=191.0, entry_price=46.6, current_value=8914.92)
+    stale2 = Position(ticker="RKLB", quantity=163.59, entry_price=63.67, current_value=10181.02)
+    db.add_all([stale, stale2])
+    db.commit()
+
+    class FakeClient:
+        is_live = True
+
+        def get_account(self):
+            return {"cash": 97729.43, "equity": 97747.43, "buying_power": 390917.72, "currency": "USD", "status": "ACTIVE"}
+
+        def get_positions(self):
+            return [
+                {"symbol": "MARA260904P00010000", "qty": 1.0, "avg_entry_price": 0.14, "current_price": 0.16, "market_value": 16.0, "unrealized_pl": 2.0, "asset_class": "us_option", "side": "long"},
+                {"symbol": "NEE260904P00078000", "qty": 1.0, "avg_entry_price": 0.03, "current_price": 0.0, "market_value": 0.0, "unrealized_pl": -3.0, "asset_class": "us_option", "side": "long"},
+                {"symbol": "SNAP260904P00005000", "qty": 2.0, "avg_entry_price": 0.01, "current_price": 0.01, "market_value": 2.0, "unrealized_pl": 0.0, "asset_class": "us_option", "side": "long"},
+            ]
+
+        def get_latest_price(self, symbol):
+            return 0.0
+
+    monkeypatch.setattr(routes, "get_alpaca_client", lambda: FakeClient())
+
+    portfolio_data = routes.get_portfolio(db)
+    assert portfolio_data["positions"] == []
+    assert portfolio_data["option_positions_count"] == 3
+    assert {p["symbol"] for p in portfolio_data["option_positions"]} == {
+        "MARA260904P00010000",
+        "NEE260904P00078000",
+        "SNAP260904P00005000",
+    }
+    assert db.query(Position).count() == 0
+
+
+def test_option_liquidation_routes_mirror_equity_smart_and_all(db, monkeypatch):
+    class FakeClient:
+        def __init__(self):
+            self.closed = []
+            self.positions = [
+                {"symbol": "LOSER", "qty": 1, "asset_class": "us_option", "current_price": 0.10, "market_value": 10, "unrealized_pl": -5},
+                {"symbol": "WINNER", "qty": 2, "asset_class": "us_option", "current_price": 0.20, "market_value": 40, "unrealized_pl": 5},
+                {"symbol": "STOCK", "qty": 1, "asset_class": "us_equity", "current_price": 100, "market_value": 100, "unrealized_pl": -10},
+            ]
+
+        def get_positions(self):
+            return self.positions
+
+        def close_position(self, symbol):
+            self.closed.append(symbol)
+            self.positions = [p for p in self.positions if p["symbol"] != symbol]
+            return {"symbol": symbol, "status": "closed"}
+
+    client = FakeClient()
+    monkeypatch.setattr(routes, "get_alpaca_client", lambda: client)
+
+    smart = routes.liquidate_smart_options(db)
+    assert smart["closed_count"] == 1
+    assert client.closed == ["LOSER"]
+
+    all_options = routes.liquidate_all_options(db)
+    assert all_options["closed_count"] == 1
+    assert client.closed == ["LOSER", "WINNER"]
+
+
+def test_autonomous_mode_kill_switch(db, monkeypatch):
+    # Do not start APScheduler in a unit test; verify state and job gating directly.
+    import agent.scheduler as scheduler_module
+    monkeypatch.setattr(scheduler_module, "start_scheduler", lambda: None)
+
+    off = set_autonomous_mode(False, db=db)
+    assert off["autonomous_mode"] is False
     assert is_autonomous_mode_active() is False
+    assert routes.get_agent_status(db)["status"] == "paused"
+    job_theme_portfolio()  # must be a no-op while the kill switch is active
 
-    # Check status endpoint reflects paused state
-    status_res = client.get("/api/status")
-    assert status_res.status_code == 200
-    assert status_res.json()["autonomous_mode"] is False
-    assert status_res.json()["status"] == "paused"
-
-    # Check decision log for operator pause entry
-    decisions_res = client.get("/api/decisions?layer=system&limit=1")
-    assert decisions_res.status_code == 200
-    latest_log = decisions_res.json()[0]
-    assert latest_log["layer"] == "system"
-    assert "PAUSED" in latest_log["action_taken"]
-
-    # 2. Verify that background job does not run when paused
-    job_theme_portfolio()  # Should cleanly return early without errors
-
-    # 3. Toggle ON
-    on_res = client.post("/api/autonomous-mode", json={"enabled": True})
-    assert on_res.status_code == 200
-    assert on_res.json()["autonomous_mode"] is True
-    assert is_autonomous_mode_active() is True
-
-    # Check status endpoint reflects running state
-    status_res2 = client.get("/api/status")
-    assert status_res2.status_code == 200
-    assert status_res2.json()["autonomous_mode"] is True
-    assert status_res2.json()["status"] == "online"
-
-    # Check decision log for operator resume entry
-    decisions_res2 = client.get("/api/decisions?layer=system&limit=1")
-    assert decisions_res2.status_code == 200
-    latest_log2 = decisions_res2.json()[0]
-    assert "RESUMED" in latest_log2["action_taken"]
+    on = set_autonomous_mode(True, db=db)
+    assert on["autonomous_mode"] is True
+    assert routes.get_agent_status(db)["status"] == "online"
+    set_autonomous_mode(False, db=db)

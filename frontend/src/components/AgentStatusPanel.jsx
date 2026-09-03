@@ -28,7 +28,7 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
           <div className="flex items-center gap-2">
-            <Activity className="w-5 h-5 text-emerald-400" />
+            <Activity className="w-5 h-5 text-slate-200" />
             <h2 className="text-lg font-bold text-slate-100">Agent Architecture & Cadence Health</h2>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
@@ -38,12 +38,11 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
 
         {/* Global Agent Status Badge */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg">
+          <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-lg">
             <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-300"></span>
             </span>
-            <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
+            <span className="text-xs font-bold text-white uppercase tracking-wider">
               {statusData?.status || 'Online'}
             </span>
           </div>
@@ -60,10 +59,10 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
         <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-4 flex flex-col justify-between gap-3">
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
+              <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
                 Layer 1: Theme & Portfolio
               </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                 Daily
               </span>
             </div>
@@ -77,7 +76,7 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Last Execution:</span>
-                <span className="text-indigo-300">{formatRunTime(themeLayer.last_run)}</span>
+                <span className="text-slate-200">{formatRunTime(themeLayer.last_run)}</span>
               </div>
             </div>
           </div>
@@ -85,7 +84,7 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
           <button
             onClick={() => onTriggerLayer('theme')}
             disabled={triggering}
-            className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition-colors"
+            className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white transition-colors"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             Trigger Theme Rebalance
@@ -96,10 +95,10 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
         <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-4 flex flex-col justify-between gap-3">
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-purple-400 uppercase tracking-wider">
+              <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
                 Layer 2: Derivatives Overlay
               </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                 Hourly
               </span>
             </div>
@@ -113,7 +112,7 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Last Execution:</span>
-                <span className="text-purple-300">{formatRunTime(overlayLayer.last_run)}</span>
+                <span className="text-slate-200">{formatRunTime(overlayLayer.last_run)}</span>
               </div>
             </div>
           </div>
@@ -121,7 +120,7 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
           <button
             onClick={() => onTriggerLayer('overlay')}
             disabled={triggering}
-            className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white transition-colors"
+            className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white transition-colors"
           >
             <Zap className="w-3.5 h-3.5" />
             Trigger Overlay Risk Check
@@ -135,7 +134,7 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
               <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
                 Layer 3: Expiration Watchdog
               </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                 Hourly
               </span>
             </div>
@@ -168,13 +167,13 @@ export default function AgentStatusPanel({ statusData, onTriggerLayer, triggerin
       {/* Provider Details Footer */}
       <div className="flex flex-wrap items-center justify-between text-xs font-mono text-slate-400 bg-slate-950/60 p-3 rounded-lg border border-slate-800">
         <div className="flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-cyan-400" />
+          <Cpu className="w-4 h-4 text-slate-300" />
           <span>
             LLM Provider: <strong className="text-slate-200">Groq ({statusData?.llm_model || 'openai/gpt-oss-120b'})</strong>
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <Server className="w-4 h-4 text-indigo-400" />
+          <Server className="w-4 h-4 text-slate-300" />
           <span>
             Backend Engine: <strong className="text-slate-200">FastAPI + APScheduler + SQLite</strong>
           </span>
