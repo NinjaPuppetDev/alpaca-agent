@@ -35,10 +35,10 @@ export default function App() {
   const fetchAllData = useCallback(async () => {
     try {
       const [portfolioRes, hedgesRes, decisionsRes, statusRes] = await Promise.all([
-        fetch('/api/portfolio').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/hedges').then((r) => (r.ok ? r.json() : null)),
-        fetch('/api/decisions?limit=50').then((r) => (r.ok ? r.json() : [])),
-        fetch('/api/status').then((r) => (r.ok ? r.json() : null)),
+        fetch(`${import.meta.env.VITE_API_URL}/api/portfolio`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`${import.meta.env.VITE_API_URL}/api/hedges`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`${import.meta.env.VITE_API_URL}/api/decisions?limit=50`).then((r) => (r.ok ? r.json() : [])),
+        fetch(`${import.meta.env.VITE_API_URL}/api/status`).then((r) => (r.ok ? r.json() : null)),
       ]);
 
       if (portfolioRes) setPortfolioData(portfolioRes);
@@ -71,7 +71,7 @@ export default function App() {
     const nextState = !autonomousMode;
     setTogglingMode(true);
     try {
-      const res = await fetch('/api/autonomous-mode', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/autonomous-mode`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: nextState }),
@@ -99,7 +99,7 @@ export default function App() {
   const handleTriggerLayer = async (layerName) => {
     setTriggering(true);
     try {
-      const res = await fetch(`/api/trigger/${layerName}`, { method: 'POST' });
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/trigger/${layerName}`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         showToast(`Triggered ${layerName} layer execution!`, 'success');

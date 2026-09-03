@@ -22,8 +22,8 @@ export default function TradingControlDashboard({
   const fetchAccountData = async () => {
     try {
       const [summaryRes, positionsRes] = await Promise.all([
-        fetch('/api/account/summary').then(r => r.json()).catch(() => null),
-        fetch('/api/account/positions').then(r => r.json()).catch(() => null),
+        fetch(`${import.meta.env.VITE_API_URL}/api/account/summary`).then(r => r.json()).catch(() => null),
+        fetch(`${import.meta.env.VITE_API_URL}/api/account/positions`).then(r => r.json()).catch(() => null),
       ]);
 
       if (summaryRes) {
@@ -60,7 +60,7 @@ export default function TradingControlDashboard({
   const handleSmartLiquidate = async () => {
     setLiquidatingMode('smart');
     try {
-      const res = await fetch('/api/positions/liquidate-smart', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/positions/liquidate-smart`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -84,7 +84,7 @@ export default function TradingControlDashboard({
   const handleLiquidateAll = async () => {
     setLiquidatingMode('all');
     try {
-      const res = await fetch('/api/positions/liquidate-all', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/positions/liquidate-all`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
